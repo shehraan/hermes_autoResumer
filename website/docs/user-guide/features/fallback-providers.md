@@ -154,6 +154,42 @@ The per-turn retry is **reset-aware**: when the primary's credentials report a r
 When a switch arms that cooldown, the fallback notice includes its approximate remaining duration, for example: `Primary retry eligible in ~60 s; recovery is not guaranteed.` Non-rate-limit switches and switches from an already-active cross-provider fallback do not announce a new primary cooldown.
 :::
 
+### Wait and resume when every quota is exhausted
+
+By default, a turn can still end when both the primary and the configured fallbacks
+are rate-limited. Opt in to keeping that same unfinished request alive:
+
+```yaml
+fallback:
+  wait_for_reset: true
+  reset_poll_seconds: 60
+```
+
+Hermes remembers the reset time reported by each exhausted route. Once none is
+eligible, it displays a cancellable wait and wakes at the earliest reset. It tries
+the primary first whenever the primary is eligible, otherwise a reopened fallback
+in configured order. If another quota response arrives, the same cycle repeats.
+Known resets can be hours or days away; this wait does not have the short outage
+recovery cycle limit. A provider that supplies no usable reset time gets a periodic
+retry after at least `reset_poll_seconds` (default 60); the primary's normal
+exponential cooldown also remains in force.
+
+The pending conversation and completed tool results stay in place. Waiting does
+not consume another goal turn or tool iteration. Esc or `/stop` cancels it, and a
+steering correction can replace the pending request. Authentication, billing,
+entitlement, policy and request-format errors retain their normal error handling.
+A partial answer already delivered to the user is not replayed by this recovery.
+
+All model and provider names still come from `model` and `fallback_providers`
+(or legacy `fallback_model`); no names belong in recovery code. `wait_for_reset`
+defaults to `false`. The Hermes process must remain running during a wait; a
+process restart does not automatically replay a potentially side-effecting turn.
+Use `/goal` when you also want automatic continuation after a successful turn.
+This recovery applies to Hermes' standard provider loop; the native Codex
+app-server runtime has a separate turn dispatcher. Primary preference uses the
+primary saved for the live session. If startup already substituted a fallback,
+select the intended primary with `/model` before starting the task.
+
 ### Examples
 
 **OpenRouter as fallback for Anthropic native:**

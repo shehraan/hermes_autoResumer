@@ -523,7 +523,9 @@ def apply_retry_restarts(
         return _verdict("continue")
 
     if _retry.restart_with_rebuilt_messages:
-        restart_count += 1
+        # Opt-in quota waits can span many resets. A completed wait breaks a failure
+        # storm; immediate retries and redirects still keep the ordinary restart cap.
+        restart_count = 0 if getattr(_retry, "quota_wait_completed", False) else restart_count + 1
         if restart_count > max_retries:
             # A stall/failure keeps re-escalating to the fallback chain: stop refunding the
             # iteration budget and re-issuing, or a runaway turn holds the turn lease

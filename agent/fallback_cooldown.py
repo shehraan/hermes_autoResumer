@@ -53,6 +53,8 @@ def _arm_rate_limit_cooldown(
     Only arm when leaving the primary: chain-switching from an active fallback means the primary
     was not the failing source. Return the armed cooldown in seconds, or None when not armed.
     """
+    from agent.turn_quota_recovery import note_route_failure
+    note_route_failure(agent, reason, reset_at)
     if reason not in _RATE_LIMIT_FAILOVER_REASONS:
         return None
     current_provider = (getattr(agent, "provider", "") or "").strip().lower()
@@ -74,6 +76,29 @@ def _arm_rate_limit_cooldown(
         backoff_count, backoff_seconds, backoff_seconds / 60, backoff_count + 1, source,
     )
     return backoff_seconds
+
+
+def candidate_pool_exhausted(agent, fb_provider: str, fb_model: str, entry: dict) -> bool:
+    """Skip a benched route; opt-in quota recovery waits for even short known resets."""
+    from agent.turn_quota_recovery import _settings, quota_candidate_blocked
+    if quota_candidate_blocked(agent, entry):
+        return True
+    pool = getattr(agent, "_credential_pool", None)
+    if pool is None or (getattr(pool, "provider", "") or "").strip().lower() != fb_provider:
+        try:
+            if _settings()[0]:
+                from agent.custom_entry_pool import load_runtime_pool
+                pool = load_runtime_pool(fb_provider, entry.get("base_url"), fb_provider, entry)
+            else:
+                from agent.credential_pool import load_pool
+                pool = load_pool(fb_provider)
+        except Exception:
+            logger.debug("Could not read fallback pool metadata", exc_info=True)
+            return False
+    if pool is None or not pool.has_credentials() or pool.has_available(model=fb_model):
+        return False
+    until = pool.next_available_at(model=fb_model)
+    return until is None or until - time.time() > (0 if _settings()[0] else 600)
 
 
 def _mark_entitlement_rejected_model(agent, api_error) -> bool:

@@ -286,6 +286,17 @@ def settle_unrecovered_error(
             compression_attempts=compression_attempts, result=result,
         )
 
+    from agent.turn_quota_recovery import recover_exhausted_quota
+    quota = recover_exhausted_quota(
+        agent, api_error, classified, _retry, error_context=error_context,
+        messages=messages, api_messages=api_messages, active_system_prompt=active_system_prompt,
+        conversation_history=conversation_history, api_call_count=api_call_count,
+    )
+    if quota is not None:
+        active_system_prompt = quota.get("active_system_prompt", active_system_prompt)
+        retry_count = compression_attempts = 0
+        return _verdict(quota["action"], quota.get("result"))
+
     # ``FailoverReason.billing`` (402) is deliberately NOT excluded: pool rotation and
     # eager fallback already gave up, so retrying only burns paid requests on a depleted
     # balance. Mirrors 401/403.
